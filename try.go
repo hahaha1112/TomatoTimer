@@ -1,31 +1,15 @@
-// package main
-//
-// import (
-//
-//	"fyne.io/fyne/v2/app"
-//	"fyne.io/fyne/v2/widget"
-//
-// )
-//
-//	func main() {
-//		a := app.New()
-//		w := a.NewWindow("Hello")
-//
-//		w.SetContent(widget.NewLabel("Hello Fyne!"))
-//		w.ShowAndRun()
-//
-// }
 package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"time"
+
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/hajimehoshi/oto"
-	"io/ioutil"
-	"time"
 )
 
 func playSound() {
@@ -62,43 +46,83 @@ func main() {
 	isPaused := false
 	isDarkMode := false
 	isWorkMode := true
+	var stopChan chan bool
+	isRunning := false
 
 	startButton := widget.NewButton("开始", func() {
+		if isRunning {
+			close(stopChan)
+			isRunning = false
+			time.Sleep(time.Millisecond * 100)
+			label.SetText("点击开始按钮开始工作")
+			timeLabel.SetText("剩余时间: 25:00")
+			modeLabel.SetText("当前模式: 工作")
+			isWorkMode = true
+			isPaused = false
+			return
+		}
+
+		isPaused = false
+		label.SetText("开始计时...")
+		isRunning = true
+		stopChan = make(chan bool)
 		go func() {
-			var remaining time.Duration
+			defer func() {
+				isRunning = false
+			}()
+
 			for {
-				if isWorkMode {
-					remaining = workDuration
-					modeLabel.SetText("当前模式: 工作")
-				} else {
-					remaining = breakDuration
-					modeLabel.SetText("当前模式: 休息")
-				}
-
-				for remaining > 0 {
-					if isPaused {
-						time.Sleep(time.Second)
-						continue
+				select {
+				case <-stopChan:
+					return
+				default:
+					duration := workDuration
+					if !isWorkMode {
+						duration = breakDuration
 					}
-					timeLabel.SetText(fmt.Sprintf("剩余时间: %02d:%02d", int(remaining.Minutes()), int(remaining.Seconds())%60))
-					time.Sleep(time.Second)
-					remaining -= time.Second
+
+					remaining := duration
+					for remaining > 0 {
+						select {
+						case <-stopChan:
+							return
+						default:
+							if isPaused {
+								time.Sleep(time.Second)
+								continue
+							}
+							timeLabel.SetText(fmt.Sprintf("剩余时间: %02d:%02d",
+								int(remaining.Minutes()),
+								int(remaining.Seconds())%60))
+							time.Sleep(time.Second)
+							remaining -= time.Second
+						}
+					}
+
+					select {
+					case <-stopChan:
+						return
+					default:
+						playSound()
+						if isWorkMode {
+							label.SetText("工作结束，休息中...")
+							isWorkMode = false
+							modeLabel.SetText("当前模式: 休息")
+						} else {
+							label.SetText("休息结束，可以开始新的工作周期了！")
+							isWorkMode = true
+							modeLabel.SetText("当前模式: 工作")
+						}
+					}
 				}
-
-				playSound() // 播放铃声
-
-				if isWorkMode {
-					label.SetText("工作结束，休息中...")
-				} else {
-					label.SetText("休息结束，可以开始新的工作周期了！")
-				}
-
-				isWorkMode = !isWorkMode
 			}
 		}()
 	})
 
 	pauseButton := widget.NewButton("暂停/继续", func() {
+		if !isRunning {
+			return
+		}
 		isPaused = !isPaused
 		if isPaused {
 			label.SetText("已暂停")
